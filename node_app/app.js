@@ -34,7 +34,7 @@ logger.info('Logger initialized');
 
 // Initialize database connection pool
 const pool = mysql.createPool({
-  host: 'localhost',
+  host: 'zoeencloud-rds.c5d2abh4bx8o.ap-south-1.rds.amazonaws.com',
   user: 'admin',
   password: 'root',
   database: 'userdb',
