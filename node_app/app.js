@@ -1,5 +1,3 @@
-// app.js
-
 const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
@@ -9,9 +7,30 @@ const bcrypt = require('bcrypt');
 const flash = require('express-flash');
 const path = require('path');
 const client = require('prom-client');
+const usersRouter = require('./routes/users');
+const winston = require('winston');
+const LokiTransport = require('winston-loki');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Initialize logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new LokiTransport({
+      host: 'http://10.0.1.140:3100',
+      labels: { job: 'nodejs-app' }
+    }),
+    new winston.transports.File({ filename: 'logs/app.log' }) // Save logs to a file
+  ],
+});
+
+logger.info('Logger initialized');
 
 // Initialize database connection pool
 const pool = mysql.createPool({
@@ -23,6 +42,8 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0
 });
+
+logger.info('Database connection pool initialized');
 
 // Express session middleware
 app.use(session({
@@ -55,18 +76,22 @@ passport.use(new LocalStrategy(
 
       // If user doesn't exist, return error
       if (!user) {
+        logger.warn(`Login failed for username: ${username} - User not found`);
         return done(null, false, { message: 'Incorrect username.' });
       }
 
       // Compare password
       const match = await bcrypt.compare(password, user.password);
       if (!match) {
+        logger.warn(`Login failed for username: ${username} - Incorrect password`);
         return done(null, false, { message: 'Incorrect password.' });
       }
 
       // If all is good, return user
+      logger.info(`User ${username} logged in successfully`);
       return done(null, user);
     } catch (err) {
+      logger.error('Error during authentication', err);
       return done(err);
     } finally {
       if (connection) {
@@ -88,6 +113,7 @@ passport.deserializeUser(async (id, done) => {
     const user = rows[0];
     done(null, user);
   } catch (err) {
+    logger.error('Error during deserialization', err);
     done(err);
   } finally {
     if (connection) {
@@ -129,15 +155,16 @@ app.post('/signup', async (req, res) => {
 
     // Check if insertion was successful
     if (result.affectedRows === 1) {
+      logger.info(`User ${username} signed up successfully`);
       res.redirect('/chatbot');
     } else {
       req.flash('error', 'Error signing up. Please try again.');
       res.redirect('/');
     }
   } catch (err) {
-    console.error(err); // Log the error to the console
+    logger.error('Error during signup', err);
     req.flash('error', 'Error signing up. Please try again.');
-    res.redirect('/'); // Redirect to signup/login page
+    res.redirect('/');
   } finally {
     if (connection) {
       connection.release();
@@ -151,13 +178,13 @@ app.get('/chatbot', (req, res) => {
 });
 
 // Start server
-app.listen(8000, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
 });
 
 // Create a Registry to register the metrics
 const register = new client.Registry();
-client.collectDefaultMetrics({register});
+client.collectDefaultMetrics({ register });
 
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
@@ -166,12 +193,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use(session({ 
-    cookie: { maxAge: 60000 },
-    store: new session.MemoryStore,
-    saveUninitialized: true,
-    resave: true,
-    secret: 'secret'
+app.use(session({
+  cookie: { maxAge: 60000 },
+  store: new session.MemoryStore,
+  saveUninitialized: true,
+  resave: true,
+  secret: 'secret'
 }))
 
 // Create a custom histogram metric
@@ -198,4 +225,5 @@ app.get('/metrics', async (req, res) => {
   // End timer and add labels
   end({ route, code: res.statusCode, method: req.method });
 });
+
 
