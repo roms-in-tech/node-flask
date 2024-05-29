@@ -8,6 +8,7 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 const flash = require('express-flash');
 const path = require('path');
+const client = require('prom-client');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -150,6 +151,51 @@ app.get('/chatbot', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(8000, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Create a Registry to register the metrics
+const register = new client.Registry();
+client.collectDefaultMetrics({register});
+
+// view engine setup
+app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', 'ejs');
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.use(session({ 
+    cookie: { maxAge: 60000 },
+    store: new session.MemoryStore,
+    saveUninitialized: true,
+    resave: true,
+    secret: 'secret'
+}))
+
+// Create a custom histogram metric
+const httpRequestTimer = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'code'],
+  buckets: [0.1, 0.3, 0.5, 0.7, 1, 3, 5, 7, 10] // 0.1 to 10 seconds
+});
+
+// Register the histogram
+register.registerMetric(httpRequestTimer);
+
+// Prometheus metrics route
+app.get('/metrics', async (req, res) => {
+  // Start the HTTP request timer, saving a reference to the returned method
+  const end = httpRequestTimer.startTimer();
+  // Save reference to the path so we can record it when ending the timer
+  const route = req.route.path;
+    
+  res.setHeader('Content-Type', register.contentType);
+  res.send(await register.metrics());
+
+  // End timer and add labels
+  end({ route, code: res.statusCode, method: req.method });
+});
+
