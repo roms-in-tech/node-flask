@@ -12,7 +12,7 @@ const winston = require('winston');
 const LokiTransport = require('winston-loki');
 
 const app = express();
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 9000;
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -36,7 +36,7 @@ logger.info('Logger initialized');
 const pool = mysql.createPool({
   host: 'zoeencloud-rds.c5d2abh4bx8o.ap-south-1.rds.amazonaws.com',
   user: 'admin',
-  password: 'Admin123123',
+  password: 'root',
   database: 'userdb',
   waitForConnections: true,
   connectionLimit: 10,
@@ -128,7 +128,7 @@ app.get('/', (req, res) => {
 });
 
 app.post('/login', passport.authenticate('local', {
-  successRedirect: '/chatbot',
+  successRedirect: '/welcome',
   failureRedirect: '/',
   failureFlash: true,
 }));
@@ -156,7 +156,7 @@ app.post('/signup', async (req, res) => {
     // Check if insertion was successful
     if (result.affectedRows === 1) {
       logger.info(`User ${username} signed up successfully`);
-      res.redirect('/chatbot');
+      res.redirect('/welcome');
     } else {
       req.flash('error', 'Error signing up. Please try again.');
       res.redirect('/');
@@ -172,9 +172,13 @@ app.post('/signup', async (req, res) => {
   }
 });
 
-// Chatbot route
-app.get('/chatbot', (req, res) => {
-  res.render('chat', { username: req.user.username });
+// Welcome route
+app.get('/welcome', (req, res) => {
+  if (req.isAuthenticated()) {
+    res.render('welcome', { username: req.user.username });
+  } else {
+    res.redirect('/');
+  }
 });
 
 // Start server
@@ -186,44 +190,13 @@ app.listen(PORT, () => {
 const register = new client.Registry();
 client.collectDefaultMetrics({ register });
 
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'ejs');
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.use(session({
-  cookie: { maxAge: 60000 },
-  store: new session.MemoryStore,
-  saveUninitialized: true,
-  resave: true,
-  secret: 'secret'
-}))
-
-// Create a custom histogram metric
-const httpRequestTimer = new client.Histogram({
-  name: 'http_request_duration_seconds',
-  help: 'Duration of HTTP requests in seconds',
-  labelNames: ['method', 'route', 'code'],
-  buckets: [0.1, 0.3, 0.5, 0.7, 1, 3, 5, 7, 10] // 0.1 to 10 seconds
-});
-
-// Register the histogram
-register.registerMetric(httpRequestTimer);
-
 // Prometheus metrics route
 app.get('/metrics', async (req, res) => {
-  // Start the HTTP request timer, saving a reference to the returned method
   const end = httpRequestTimer.startTimer();
-  // Save reference to the path so we can record it when ending the timer
   const route = req.route.path;
-    
+
   res.setHeader('Content-Type', register.contentType);
   res.send(await register.metrics());
 
-  // End timer and add labels
   end({ route, code: res.statusCode, method: req.method });
 });
-
-
